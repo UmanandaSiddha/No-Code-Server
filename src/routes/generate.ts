@@ -1,4 +1,7 @@
 import { Request, Response } from "express";
+import fs from "fs";
+import path from "path";
+import { generateFromDrawing } from "../services/gemini";
 
 // Stub response generator
 const fakeResponse = () => ({
@@ -18,8 +21,41 @@ export const fromPrompt = async (req: Request, res: Response) => {
     return res.json(fakeResponse());
 };
 
-export const fromDrawing = async (req: Request, res: Response) => {
-    const { svg, png } = req.body;
-    console.log("Got drawing", svg?.length, png?.length);
-    return res.json(fakeResponse());
-};
+export async function fromDrawing(req: Request, res: Response) {
+    try {
+        const { imageBase64, prompt } = req.body;
+
+        const tmpDir = path.join(__dirname, "..", "..", "public", "images");
+        if (!fs.existsSync(tmpDir)) {
+            fs.mkdirSync(tmpDir);
+        }
+
+        const imagePath = path.join(tmpDir, `drawing-${Date.now()}.png`);
+        const imageBuffer = Buffer.from(imageBase64, "base64");
+        fs.writeFileSync(imagePath, imageBuffer);
+
+        const code = await generateFromDrawing(
+            imageBase64,
+            `${prompt}. The output should be in the form of json of type object with 2 fields html and css, and write all the styling in inline css only. Make modern Ui with slick design and color combination and make it responsive` || "Generate HTML+CSS layout"
+        );
+
+        let parsed = code;
+
+        // Strip markdown fences if present
+        if (typeof code === "string") {
+            parsed = code.replace(/```json|```/g, "").trim();
+            try {
+                parsed = JSON.parse(parsed);
+            } catch {
+                console.error("Failed to parse generated code");
+            }
+        }
+
+        console.log(parsed);
+
+        res.json({ success: true, parsed });
+    } catch (err: any) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+}
